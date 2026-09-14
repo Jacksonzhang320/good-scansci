@@ -28,7 +28,7 @@ description: 大型文献清单分类摸底(嗅探优先)。当用户拿到数�
 - Sci-Hub 三镜像轮测:`sci-hub.vg` / `sci-hub.al` / `sci-hub.ee`(国内可达性 2026-08 实测;se/ru/st/ws/wf 不通,ru 返回反爬页)。
 - 15 并发、每篇 3 次重试轮换域名。**四分类**:hit(HTML 含 `(embed|iframe) src="...pdf`,命中页 ~8KB)/ miss / turnstile(含 `challenges.cloudflare.com/turnstile` 或 `Verification - Sci-Hub`,按 IP 频率随机插入,假 DOI 也会触发)/ blocked(403/503)。
 - ⚠️ HTTP 200 ≠ 成功,验证页也是 200,必须看内容。
-- **LibGen 不用测**:scimag 库与 Sci-Hub 同源,全部镜像国内不可达(16 域名实测)。
+- **LibGen 活着但有两道闸**(2026-09 实测,推翻旧的"全镜像不可达"记录):`libgen.li` 走代理/`libgen.bz` 直连均可达;①裸请求拿到 200 空体——必须先 GET 首页拿会话 cookie 再带 Referer 请求 `ads.php?doi=`(插件已内置);②文件 CDN(booksdl)大概率 503,对 `get.php` 链接重试 3-4 次必中。搜不到结果时先区分"没会话"和"真没有"。
 - 三镜像全 miss = 灰色源确认无。
 
 ### 3. 合法 OA 补捞(对 Sci-Hub miss 子集)
