@@ -88,7 +88,8 @@ scansci-pdf search "关键词" --limit 10 --sort cited_by_count   # 13源引擎,
 
 | 症状 | 修复 |
 |---|---|
-| Sci-Hub 返回 Cloudflare/Turnstile 页 | `browser-status` 查后端;Turnstile widget 空白是 patchright 已知 bug(1.56~1.61)→ `config-cmd browser_backend cloakbrowser`,或改走机构路径 |
+| Sci-Hub 返回 Cloudflare/Turnstile 页 | `browser-status` 查后端;Turnstile widget 空白是 patchright 已知 bug(1.56~1.61)→ `config-cmd browser_backend camoufox`(反指纹 Firefox,已装并实测)或 `config-cmd browser_backend cloakbrowser`,或改走机构路径 |
+| camoufox 提示未安装内核 | `python -m camoufox fetch`(需代理);wrapper: `pip install scansci-pdf[camoufox]` |
 | cloakbrowser 内核过老 | `config-cmd browser_executable "C:\Program Files\Google\Chrome\Application\chrome.exe"` |
 | 所有源超时 | 查 `network_proxy`;本机代理可能没启动,先测端口 |
 | Elsevier 只回 1 页预览 | key 无效/无权限,重新 setup --validate |

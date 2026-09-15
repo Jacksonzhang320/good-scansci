@@ -473,7 +473,14 @@ def _launch_camoufox(
     Returns a vanilla ``playwright.sync_api.Browser`` so the rest of the stack
     (contexts, cookies, close) works unchanged. Handles its own Playwright
     driver lifecycle, mirroring the other backends.
+
+    Callers pass Chromium-style flags (--disable-blink-features=..., ...);
+    Camoufox is a Firefox fork that configures its own anti-fingerprinting,
+    so caller args are dropped rather than handed to the Firefox binary
+    (unknown flags end up treated as open-URL arguments there).
     """
+    if args:
+        logger.debug("browser_backend: camoufox ignores %d caller arg(s) (Chromium flags)", len(args))
     from camoufox import DefaultAddons, NewBrowser
     from playwright.sync_api import sync_playwright
 
@@ -487,7 +494,7 @@ def _launch_camoufox(
             pw,
             headless=headless,
             humanize=humanize,
-            args=args or [],
+            args=[],  # chromium flags dropped — see docstring
             proxy=proxy,
             **opts,
         )
@@ -518,7 +525,12 @@ def _launch_camoufox_persistent(
     humanize: bool,
     **kwargs: Any,
 ) -> Any:
-    """Persistent context via Camoufox (returns a BrowserContext)."""
+    """Persistent context via Camoufox (returns a BrowserContext).
+
+    Caller args (Chromium flags) are dropped — see _launch_camoufox.
+    """
+    if args:
+        logger.debug("browser_backend: camoufox ignores %d caller arg(s) (Chromium flags)", len(args))
     from camoufox import DefaultAddons, NewBrowser
     from playwright.sync_api import sync_playwright
 
@@ -532,7 +544,7 @@ def _launch_camoufox_persistent(
             user_data_dir=user_data_dir,
             headless=headless,
             humanize=humanize,
-            args=args or [],
+            args=[],  # chromium flags dropped — see _launch_camoufox
             proxy=proxy,
             **opts,
         )
