@@ -571,6 +571,20 @@ def _launch_camoufox_persistent(
 # Public entry points
 # ---------------------------------------------------------------------------
 
+def _proxy_from_config(config: dict[str, Any] | None) -> Any:
+    """Playwright proxy dict from config, or None.
+
+    Camoufox (Firefox) ignores Chromium's --proxy-server launch arg, so the
+    configured egress (browser_static_proxy, else network_proxy) must be
+    passed explicitly — otherwise camoufox always goes direct and every
+    proxy-required host times out.
+    """
+    cfg = config or {}
+    proxy = (str(cfg.get("browser_static_proxy", "") or "").strip()
+             or str(cfg.get("network_proxy", "") or "").strip())
+    return {"server": proxy} if proxy else None
+
+
 def launch(
     *,
     headless: bool = True,
@@ -587,6 +601,8 @@ def launch(
     ``playwright.chromium.launch()`` / ``cloakbrowser.launch()``.
     """
     backend = resolve_backend(config)
+    if backend == BACKEND_CAMOUFOX and proxy is None:
+        proxy = _proxy_from_config(config)
     if backend == BACKEND_PATCHRIGHT:
         if humanize:
             logger.debug("browser_backend: humanize not supported by patchright, ignored")
@@ -611,6 +627,8 @@ def launch_persistent_context(
     Same contract as ``playwright.chromium.launch_persistent_context()``.
     """
     backend = resolve_backend(config)
+    if backend == BACKEND_CAMOUFOX and proxy is None:
+        proxy = _proxy_from_config(config)
     if backend == BACKEND_PATCHRIGHT:
         if humanize:
             logger.debug("browser_backend: humanize not supported by patchright, ignored")

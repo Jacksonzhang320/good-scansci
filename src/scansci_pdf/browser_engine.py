@@ -57,12 +57,21 @@ _HAS_BROWSER_BACKEND: bool | None = None
 
 def _check_browser_backend(config: dict[str, Any] | None = None) -> bool:
     """Check whether the resolved backend is importable (cached per backend)."""
-    from .browser_backend import is_available
+    from .browser_backend import (
+        BACKEND_CAMOUFOX,
+        BACKEND_CLOAKBROWSER,
+        BACKEND_PATCHRIGHT,
+        is_available,
+        resolve_backend,
+    )
 
-    global _HAS_BROWSER_BACKEND
     backend = resolve_backend(config)
     if backend == BACKEND_CLOAKBROWSER:
         return is_available(BACKEND_CLOAKBROWSER)
+    if backend == BACKEND_CAMOUFOX:
+        # A missing camoufox must not be masked by (or masked as) a patchright
+        # check — resolve_backend already guarantees it is the real selection.
+        return is_available(BACKEND_CAMOUFOX)
     if _HAS_BROWSER_BACKEND is None:
         _HAS_BROWSER_BACKEND = is_available(BACKEND_PATCHRIGHT)
     return _HAS_BROWSER_BACKEND
@@ -151,6 +160,29 @@ def _build_browser_args(config: dict[str, Any] | None = None) -> list[str]:
         if proxy:
             args.append(f"--proxy-server={proxy}")
     return args
+
+
+def close_shared_browser(config: dict[str, Any] | None = None) -> None:
+    """Tear down THIS thread's shared browser (driver + loop included).
+
+    Needed before opening a VISIBLE browser on the same thread: the shared
+    sync-API loop would otherwise reject the second launch ("Playwright Sync
+    API inside the asyncio loop"). The shared browser relaunches lazily on
+    the next headless use.
+    """
+    browser = getattr(_tls, "browser", None)
+    if browser is None:
+        return
+    try:
+        browser.close()
+    except Exception:
+        pass
+    try:
+        _unregister_browser(browser)
+    except Exception:
+        pass
+    _tls.browser = None
+    _tls.context = None
 
 
 def _get_shared_browser(config: dict[str, Any] | None = None):

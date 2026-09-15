@@ -81,9 +81,18 @@ def _restore_cookies_to_context(context: Any, config: dict[str, Any]) -> None:
 
 @contextlib.contextmanager
 def _visible_browser(config: dict[str, Any], publisher: str, *, viewport: dict | None = None):
-    """Open visible CloakBrowser with persistent profile. Falls back to ephemeral."""
-    if not _HAS_CLOAKBROWSER:
-        raise RuntimeError("cloakbrowser not installed. Run: pip install cloakbrowser")
+    """Open visible stealth browser with persistent profile. Falls back to ephemeral."""
+    from .browser_engine import close_shared_browser, is_available
+
+    # Any resolved backend works (camoufox included); the old _HAS_CLOAKBROWSER
+    # gate wrongly required the cloakbrowser package.
+    if not is_available(config):
+        raise RuntimeError(
+            "no browser backend available. Run: pip install patchright / cloakbrowser / camoufox")
+    # The shared headless browser holds this thread's sync-API loop — a second
+    # (visible) launch on the same thread dies with "Sync API inside the
+    # asyncio loop". Tear it down first; it relaunches lazily when needed.
+    close_shared_browser(config)
     profile_dir = _get_profile_dir(config, publisher)
     browser = None
 
@@ -1661,8 +1670,11 @@ def _browser_download(
 
     log.info(f"   [{publisher}] browser download: {article_url[:80]}")
 
-    # Create tab to a lightweight page first, inject cookies, then navigate to target
-    tab_id = create_tab("https://www.google.com/", config, timeout=15.0)
+    # Create tab to a lightweight page first, inject cookies, then navigate
+    # to target. about:blank — a google.com warm-up hard-fails on networks
+    # where Google is unreachable (China), killing the strategy even when
+    # the publisher site itself is reachable.
+    tab_id = create_tab("about:blank", config, timeout=15.0)
     if not tab_id:
         return False
 
