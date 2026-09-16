@@ -66,7 +66,8 @@ def predict_channel(identifier: str) -> str:
 
 from .supplementary import fetch_supplementary
 
-_PDF_URL_HINT = re.compile(r"\.pdf($|[?#])|/pdf/|article-pdf|/epdf/", re.IGNORECASE)
+_PDF_URL_HINT = re.compile(
+    r"\.pdf($|[?#])|/pdf(/|\?|$)|article-pdf|/epdf/|/pdfdirect", re.IGNORECASE)
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
 
@@ -200,13 +201,17 @@ def _s2_batch_oa_urls(dois: list[str], config: dict[str, Any]) -> dict[str, str]
     return out
 
 
-# MDPI DOI-prefix -> full journal name for mdpi-res.com CDN URLs. Ambiguous
-# prefixes (app/s/pr) are left unmapped — identity misses just overflow to
-# the grey lane. Field-tested 268/285 = 94% hit rate.
+# MDPI DOI-prefix -> full journal name for mdpi-res.com CDN URLs. Mappings
+# verified live (2026-09, HTTP %PDF probe) except where noted; single-letter
+# and non-identity prefixes MUST be mapped here or the constructed URL misses.
+# engproc (conference proceedings) uses special segment numbering not covered
+# by the vol/article formula — those entries fall through to other lanes.
 _MDPI_SLUGS = {
     "su": "sustainability", "atmos": "atmosphere", "w": "water", "f": "forests",
     "min": "minerals", "en": "energies", "polym": "polymers",
     "applbiosci": "appliedbiosciences",
+    "app": "applsci", "educsci": "education", "tourhosp": "tourismhosp",
+    "d": "diversity", "a": "algorithms", "dj": "dentistry",
 }
 
 
@@ -610,6 +615,24 @@ def run_lanes(
     _transient_retry(results, entries, out, config)
     _progress.finish()
     _fetch_si_for_results(results, out, config)
+
+    # Result guarantee: every input entry must produce a row. Entries whose
+    # only lane was disabled (grey vetoed by config, institutional off, …)
+    # used to vanish silently — the caller saw "0/0 succeeded" with no
+    # explanation. Surface exactly WHY each unprocessed entry has no result.
+    seen_dois = {str(r.get("doi", "")).strip().lower() for r in results}
+    for e in entries:
+        if e.unresolved or not e.identifier:
+            continue
+        if e.identifier.lower() in seen_dois:
+            continue
+        ch = e.channel or predict_channel(e.identifier)
+        went_grey = ch not in ("oa", "elsevier", "institution") and not e.oa_url
+        reason = ("grey lane disabled (scihub_enabled=false or config veto)"
+                  if went_grey and not allow_grey else
+                  "no lane produced a result — check channel routing")
+        results.append({"doi": e.identifier, "success": False,
+                        "error": reason, "source": "none"})
     return results
 
 

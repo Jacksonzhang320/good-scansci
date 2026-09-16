@@ -776,11 +776,29 @@ def publisher_batch_cmd(
     print()
 
     # Use the existing publisher batch infrastructure
-    from .institutional.publisher_batch import PublisherBatchDownloader
-    downloader = PublisherBatchDownloader(config)
-    results = downloader.run(dois, publisher=publisher)
+    from .institutional.publisher_batch import PaperRecord, PublisherBatchDownloader
+    from .institutional.publisher_profiles import _PROFILE_ALIASES, list_publisher_profiles
+    from .sources.publishers import get_publisher
 
-    success = sum(1 for r in results if r.get("success"))
+    key = (publisher or "").strip().lower()
+    if not key and dois:
+        key = get_publisher(dois[0]).lower()
+    profile = _PROFILE_ALIASES.get(key)
+    if profile is None:
+        raise SystemExit(
+            f"Unknown/unresolved publisher '{publisher or key or '(auto)'}'. "
+            f"Pass --publisher with one of: {', '.join(list_publisher_profiles())}")
+    downloader = PublisherBatchDownloader(config, profile=profile)
+    records = [PaperRecord(doi=d) for d in dois]
+    summary = downloader.run_records(records, output)
+    results = summary.get("results", []) if isinstance(summary, dict) else []
+
+    def _ok(r: Any) -> bool:
+        if isinstance(r, dict):
+            return bool(r.get("ok"))
+        return bool(getattr(r, "ok", False))
+
+    success = sum(1 for r in results if _ok(r))
     print(f"\n  Results: {success}/{len(dois)} downloaded")
 
 

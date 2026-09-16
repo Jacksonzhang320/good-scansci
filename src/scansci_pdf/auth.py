@@ -191,7 +191,20 @@ class WebVPNAuth:
         """Ensure we have a valid session."""
         proxy = self.config.get("network_proxy", "")
         if proxy:
-            logger.info("Connector mode: skipping login (connector handles auth).")
+            # Connector/Campus-tunnel assumption: the configured proxy carries
+            # campus egress, so IP-based entitlement should work without SSO.
+            # Still try saved cookies first, and make the assumption LOUD —
+            # with a personal tunnel (Clash etc.) this assumption silently
+            # starves every institutional request behind auth_required.
+            if self._try_load_cookies():
+                logger.info("Loaded saved cookies - session is valid.")
+                return True
+            logger.warning(
+                "network_proxy is set — assuming connector/campus-tunnel mode "
+                "and skipping institutional login. If your proxy is a personal "
+                "tunnel, institutional access WILL fail: clear network_proxy "
+                "and run `scansci-pdf login` to establish an SSO session."
+            )
             return True
 
         if not force and self._try_load_cookies():
