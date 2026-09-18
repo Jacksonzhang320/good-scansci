@@ -630,7 +630,9 @@ def elsevier_setup(
         changed = True
         print(f"  Elsevier inst token: saved")
 
-    if not changed:
+    if changed:
+        save_config(config)
+    else:
         has_key = bool(config.get("elsevier_api_key"))
         has_token = bool(config.get("elsevier_insttoken"))
         print(f"  Elsevier API key:   {'set' if has_key else '(not set)'}")

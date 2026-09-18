@@ -809,6 +809,9 @@ def _try_instsci_browser(doi: str, output_path: Path, config: dict[str, Any]) ->
 
         log.info(f"   [WebVPN-Browser] Page title: '{title}' URL: {url_now[:80]}")
         if "登录" in title or "身份" in title or "二次认证" in title or "CAS" in title or any(t in url_now for t in _auth_url_signals):
+            if config.get("browser_headless", True):
+                log.info("   [WebVPN-Browser] Login required but in headless mode — fast-failing")
+                return None
             print(f"  检测到登录页面，请完成登录...")
             # Wait up to 5 minutes, checking title every 3 seconds
             for i in range(100):

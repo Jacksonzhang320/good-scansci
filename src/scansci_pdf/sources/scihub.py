@@ -293,6 +293,9 @@ def _solve_altcha_and_reload(
         return None
 
     domain = urllib.parse.urlparse(landing_url).netloc
+    if config.get("browser_headless", True) or config.get("scihub_browser_headless", True):
+        log.info(f"   [altcha] {domain} has ALTCHA verification wall: skipping in headless mode to avoid hanging")
+        return None
     if _wall_guard(domain, config):
         log.info(f"   [altcha] {domain} in wall cooldown — skipping this attempt")
         return None

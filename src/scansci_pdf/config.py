@@ -94,23 +94,25 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Turnstile 交互门（如 sci-hub.vg）：无头会话下无法点击，默认跳过并冷却。
     # scihub_browser_headless=false 时可开启人工点一次模式（点一次整批复用）。
     "scihub_turnstile_click": True,
-    "turnstile_wait_sec": 180,
+    "turnstile_wait_sec": 15,
     # 机构级联并行 fetcher 数（各持独立登录会话）。默认 1 = 串行；2 可省约一半
     # Phase 2 时间，代价是同 IP 双浏览器会话。
     "institutional_workers": 1,
     # 灰色源竞速浏览器的独立无头开关（只影响 sci-hub 竞速，机构登录仍有可见窗口）。
     # true = 竞速全程零窗口、零任务栏闪烁；指纹安全性由 UA 清洗保证。
-    "scihub_browser_headless": False,
+    "scihub_browser_headless": True,
     "scihub_browser_first": True,  # false = pure-HTTP Sci-Hub lane (use when the PDF CDN challenges headless browsers but serves plain requests)
     # 浏览器内核选择（CloakBrowser 免费版内置 Chromium 146 已过老，遇 Cloudflare Turnstile 会反复验证）：
     #   browser_executable: 显式指定浏览器二进制路径（本机 Chrome/Edge）；留空=自动探测
     #   browser_auto_upgrade: True 时自动探测本机 Chrome/Edge（版本 > 146 优先于内置 stealth Chromium）
-    "browser_executable": "",
+    "browser_executable": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
     "browser_auto_upgrade": True,
-    "is_campus_network": False,
+    "is_campus_network": True,
     "tor_proxy": os.environ.get("TOR_PROXY", ""),
     "tor_use_bridges": False,
-    "use_tor_for_scihub": True,
+    "use_tor_for_scihub": False,
+    "race_mode": "full",
+    "browser_headless": True,
     "google_scholar_limit": 5,
     "max_browser_workers": 1,
     "scihub_browser_workers": 3,  # Number of Sci-Hub domains to race in parallel via browser

@@ -46,12 +46,18 @@ def try_carsi(doi: str, output_path: Path, config: dict[str, Any]) -> dict[str, 
         if cfg:
             resolved_host = urlparse(resolved_url).hostname or ""
             primary_domain = cfg.domains[0]
-            if resolved_host and primary_domain not in resolved_host:
+            if (resolved_host and primary_domain not in resolved_host) or ("retrieve/pii" in resolved_url):
                 # Reconstruct URL using primary domain + same path
                 from urllib.parse import urlunparse
                 parsed = urlparse(resolved_url)
+                new_path = parsed.path
+                if "retrieve/pii" in new_path:
+                    new_path = new_path.replace("retrieve/pii", "science/article/pii")
+                target_host = primary_domain
+                if primary_domain == "sciencedirect.com":
+                    target_host = "www.sciencedirect.com"
                 resolved_url = urlunparse(parsed._replace(
-                    scheme="https", netloc=primary_domain))
+                    scheme="https", netloc=target_host, path=new_path))
                 log.info(f"   [CARSI] Redirected to primary domain: {resolved_url[:80]}")
 
         # Try browser download (CloakBrowser first, Selenium fallback)

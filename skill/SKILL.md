@@ -1,183 +1,134 @@
 ---
 name: scansci-pdf
-description: >
-  Use this skill whenever the user wants to download academic papers, search for research literature,
-  get citations (BibTeX/RIS/EndNote), manage WebVPN institutional proxy for paper access,
-  import .bib files, or batch-download papers. This skill orchestrates the scansci-pdf MCP server
-  which exposes 17 high-level tools covering download (OA/grey/institutional channels),
-  discovery, queue preparation, diagnostics, and login.
-  TRIGGER when: user mentions downloading papers, DOI, arXiv ID, Sci-Hub, paper search,
-  literature review, citation export, WebVPN, institutional access, "帮我下载论文", "搜索文献",
-  "批量下载", "论文下载", "文献检索", or provides a list of DOIs/arXiv IDs.
-  SKIP: user is only discussing papers conceptually without intent to download/search/cite,
-  or user asks about non-academic PDFs (invoices, reports, etc.).
+description: 下载学术论文。支持 DOI、arXiv ID、关键词搜索、批量下载、Elsevier API、WebVPN/CARSI 机构访问、下载失败排障。当用户要求下载论文(单篇或批量)、搜索文献、获取引文、配置 Elsevier/ScienceDirect API、或下载遇到 Cloudflare/验证页/代理问题时使用。用户仅讨论 PDF 解析/转换工具的对比或选型(如 pymupdf4llm vs MinerU)而无需检索文献证据时不要使用;只有确实要检索或下载文献时才加载本 skill。
 ---
 
-# scansci-pdf — 学术论文下载 MCP 服务
+# ScanSci PDF — 学术论文极速下载与检索
 
+20+ 数据源并行竞速，首个成功立即返回。数百篇以上的清单需要先分类摸底（OA/Sci-Hub/需机构）时，转用 `scansci-sort` skill。
 
-## ⚠️ 修改反爬/嗅探/镜像相关代码前必读
+---
 
-先读 [`docs/PLAYBOOK.md`](../../docs/PLAYBOOK.md)：镜像健康唯一存储（domain_db wall_state 表）、
-结构性失败签名表、节奏参数、已知死镜像清单、以及六条铁律（含"造轮子前先 grep 家底"——
-镜像健康存储曾被重复造过三代）。
-## 概述
+## 核心设计哲学与铁律（Fast-Fail 标准规范）
 
-scansci-pdf 是一个 MCP 服务器，提供 **17 个高层工具**，覆盖学术论文的搜索、下载（开放获取 / 灰色源 / 机构渠道）、发现与队列准备、引文导出和诊断排障。下载引擎支持 13+ 数据源并行竞速、100+ 中国高校 WebVPN。
+在批量检索与真实文献下载中，**速度优先与确定性优先**。绝不为一个不可达渠道盲等数分钟阻塞全局流水线：
 
-## MCP 工具参考（17 个）
+1. **硬核物理截断（Hard Physical Cutoffs）**:
+   - **极短宽限期（`grace = 10s`）**：彻底废弃历史 180s/300s 人工等待机制。未在 10s 内拿到全文流即刻熔断切换。
+   - **反爬与人工登录零盲等**：无头模式（`browser_headless = true`）下，遇到任何 SSO/CAS 人工登录跳转、二维码验证、或 ALTCHA/Cloudflare 僵尸验证墙，**0 秒硬拦截直接 fast-fail 跳过**，严禁进入 100 次循环（300s）人工等待。
+   - **单篇判定上限**：全渠道综合判定耗时严格约束在 15~25 秒内闭环。
+2. **齐发竞速模式（`race_mode = full`）**:
+   - 默认开启 Flat Parallel Racing。轻量源与无头浏览器通道在同一毫秒并发齐发，单篇耗时由逐级累加降至“单源最大耗时”（通常 ≤ 15 秒）。
+3. **黄金三梯队渠道架构（Golden 3-Tier Hierarchy）**:
+   - **Tier 1 (极速 HTTP 并行流，1-5s，命中率最高且零开销)**:
+     - 预印本原生源 (bioRxiv, arXiv, Research Square, SSRN)
+     - 开放仓储与 OA 接口 (Unpaywall, EuropePMC, PMC, OpenAIRE, CORE)
+     - 开放期刊直连 (Frontiers, eLife, eNeuro, MDPI CDN `lane_mdpi_cdn`)
+   - **Tier 2 (校园网原生直连 Chrome 捕获，8-15s，高校主力)**:
+     - 依托校园网原生 IP（如清华/中科院内网），TUN 模式必须配置对应出版商域名为 `DIRECT` 直连。
+     - 针对 Elsevier/Cell Press，自动重写 DOI 为 PII (`sciencedirect.com/science/article/pii/<PII>`)，免去无权限 API Key 的无效 403 往返，直接由无头浏览器在校园内网完成 PDF 数据流抽取与 S3 签名重定向抓取。
+     - 严格约束 `max_browser_workers = 1` 共享无头浏览器，避免 Windows Commit/分页内存耗尽错误（`0x800705AF`）。
+   - **Tier 3 (Sci-Hub 闪电直链镜像，10-15s，经典文献底座)**:
+     - 优先直出无验证码镜像（`sci-hub.bz`, `sci-hub.ru` 免验直链）。
+     - 遇 ALTCHA 验证盾直接判定为灰源无权并熔断切换，不与防爬虫验证码死磕。
+   - **黑名单与禁忌渠道（Strictly Banned Lanes）**:
+     - 无机构绑定的普通 Elsevier API Key（100% 403 `NOT_ENTITLED`）。
+     - 自动化批量模式下弹窗等待人工输入的 WebVPN / CARSI CAS 页面。
+     - 境外 Tor SOCKS 代理直连。
 
-### 下载
+---
 
-| 工具 | 功能 | 关键参数 |
-|------|------|----------|
-| `scansci_pdf_download` | 单篇下载（OA/灰色源/机构级联） | `identifier`（必需）、`strategy`（可覆盖全局策略）、`markdown`/`bibtex`/`download_si`（可选） |
-| `scansci_pdf_batch_download` | 批量下载 | `identifiers`（必需）、`scihub_enabled`、`batch_id`（断点续传）、`resume`（默认 true） |
-| `scansci_pdf_cache_clear` | 清理下载缓存 | `identifier`（可选，省略清全部） |
+## 环境检查
 
-**identifier 格式**：DOI（`10.1038/nature12373`）、DOI URL、arXiv ID（`2301.00001`）。
+工具列表含 `scansci_pdf_*` → 用 MCP 工具;否则 CLI 兜底,先 `scansci-pdf check` 确认依赖。
 
-**下载策略（`download_strategy`，全局配置或单次 `strategy=` 覆盖）**：
+## 策略选择规则(必读)
 
-| 策略 | 含义 |
-|------|------|
-| `fastest`（默认） | 全部源并行竞速（含灰色源，若 `scihub_enabled=true`） |
-| `oa_first` | OA 源优先，失败后回退灰色源 |
-| `scihub_first` | 灰色源优先，失败后回退合法源 |
-| `scihub_only` | 仅 Sci-Hub |
-| `legal_only` | 仅合法源（Unpaywall/出版商/OpenAIRE 等），不碰 Sci-Hub/LibGen |
+**用户指定了来源 = 只用那个来源:**
 
-**来源授权不可被调度扩张**：用户显式设置 `scihub_enabled=false` 或 `legal_only` 时，任何批量/车道调度都不会重新启用灰色源；只有显式 `--scihub`/`scihub_enabled=true` 或全局策略允许时才启用。
+| 用户说的是 | 策略 | 说明 |
+|-----------|------|------|
+| "从 Sci-Hub 下载" | `scihub_only` | 只走 Sci-Hub |
+| "优先 scihub" | `scihub_first` | OA 仍竞速——OA 更快时最终来源可能是 OA |
+| "只要免费合法的" | `legal_only` | 排除 Sci-Hub / LibGen |
+| 没指定 | `fastest`(默认) | 全源并行竞速 |
 
-### 发现与队列准备
-
-| 工具 | 功能 | 关键参数 |
-|------|------|----------|
-| `scansci_pdf_find` | ScanSci Find 引擎：`action=plan\|estimate\|smoke\|calibrate` 系统综述搜索协议 | `action`、`query`、`domain`、`depth`、`sample_size` |
-| `scansci_pdf_expand_citations` | 引文追踪（Semantic Scholar/OpenCitations） | `query`、`rounds`（≤5）、`citation_source` |
-| `scansci_pdf_prepare_queue` | 准备下载队列：`action=verify\|resolve_oa\|build\|full` | `candidates_json`、`query`、`limit` |
-| `scansci_pdf_search` | 关键词/作者搜索（OpenAlex） | `query`/`author`/`author_id`、`limit`、`year_from`、`year_to`、`sort` |
-| `scansci_pdf_parse_list` | 解析论文列表文件（APA/BibTeX/DOI 列表/表格） | `file_path`（必需） |
-| `scansci_pdf_citation` | 导出引文 | `identifier`（必需）、`format`（bibtex/ris/endnote/metadata） |
-| `scansci_pdf_zotero_push` | 推送已下载论文到 Zotero | `identifier`（必需，需先下载） |
-
-**重要**：`verify`/`resolve_oa` 是轻量操作，预算 45 秒内返回；超时会返回结构化错误（`stage`/`timeout_seconds`/`retryable`），不会无反馈地等 180 秒。`resolve_oa` 依赖 Unpaywall 邮箱配置（`scansci_pdf_config(key='email', ...)`），缺失时直接返回 `blocked_configuration` 而不是逐条失败。
-
-### 配置、通道与诊断
-
-| 工具 | 功能 | 关键参数 |
-|------|------|----------|
-| `scansci_pdf_config` | 读取/设置配置（值会脱敏） | `key`（可选）、`value`（可选） |
-| `scansci_pdf_channel_status` | 机构渠道状态：`kind=webvpn\|carsi\|ezproxy\|browser\|webvpn_test` | `kind`、`doi`（仅测试） |
-| `scansci_pdf_schools` | 搜索/设置 WebVPN 高校 | `action=search\|set`、`query`、`school` |
-| `scansci_pdf_diagnostics` | 健康/网络/来源/设置诊断 | `check=health\|network\|sources\|setup` |
-| `scansci_pdf_tor` | 内嵌 Tor：`action=install\|start\|stop` | `action`、`use_bridges` |
-
-### 登录（机构渠道）
-
-| 工具 | 功能 | 关键参数 |
-|------|------|----------|
-| `scansci_pdf_login` | 统一登录：`kind=publisher\|webvpn\|carsi\|ezproxy\|custom\|cookie_import` | `kind`（默认 publisher）、`identifier`、`publisher`、`custom_url`、`cookie_file` |
-| `scansci_pdf_elsevier_setup` | Elsevier API Key 配置向导（免费，无需机构邮箱） | `test`（验证 key） |
-
-## 工作流编排
-
-### 流程 1：模糊研究查询 → 下载
-
-```
-1. scansci_pdf_find(action="plan"|"estimate", query="植物功能性状 气候变化")
-   或 scansci_pdf_search(query="plant functional traits climate change", limit=20, sort="cited_by_count")
-2. scansci_pdf_prepare_queue(action="full", candidates_json=<candidates>)
-   → 验证 DOI + 解析 OA 位置（45s 预算，超时给出结构化错误）
-3. scansci_pdf_batch_download(identifiers=[...])
+```bash
+scansci-pdf config-cmd download_strategy scihub_only
 ```
 
-**关键点**：搜索后必须让用户确认，不要自动下载所有结果。
+## 单篇下载
 
-### 流程 2：论文列表全文下载
-
-```
-1. scansci_pdf_parse_list(file_path="papers.md") → 查看解析结果
-2. scansci_pdf_batch_download(identifiers=entries)（或 resolve_and_download 的等价组合）
+```bash
+scansci-pdf get <DOI>                    # 零配置竞速 (默认 race_mode=full, grace=10s)
+scansci-pdf fetch <DOI> [--output DIR]   # 机构级联通道
 ```
 
-### 流程 3：WebVPN 机构代理
+竞速分层: Tier1 出版商/OA 直链(4s) → Tier2 OpenAlex/Unpaywall(5s) → Tier3 EuropePMC/PMC/arXiv(8s) → Tier4 Sci-Hub 闪电镜像(10s) → Tier5 校园网/机构浏览器直连(15s)。
 
-```
-1. scansci_pdf_schools(action="search", query="清华") → 找到学校
-2. scansci_pdf_schools(action="set", school="清华大学")
-3. scansci_pdf_login(kind="webvpn") → 浏览器 CAS 认证
-4. scansci_pdf_channel_status(kind="webvpn_test", doi="10.1038/nature12373") → 确认连通
-5. scansci_pdf_download(identifier="...") → 自动走 WebVPN 渠道
-```
+**换源重下必须清缓存**:`rm -f <out>/.doi_index.json && rm -rf ~/.scansci-pdf/cache/*`。
 
-### 流程 4：付费论文登录下载（出版社 SSO）
+## 批量下载标准流程
 
-当下载返回 `error_type="paywall"` 和 `action="login_required"` 时：
-
-```
-1. scansci_pdf_download(identifier="10.1126/science.aec6396")
-   → 返回 {"error_type": "paywall", "action": "login_required", ...}
-2. scansci_pdf_login(identifier="10.1126/science.aec6396")  # kind=publisher 默认
-   → 打开浏览器到论文页 → 用户点 "Access through your institution" → 选择机构 → SSO → 关闭浏览器
-3. scansci_pdf_download(identifier="10.1126/science.aec6396") → 用已保存 cookies 成功下载
+```bash
+scansci-pdf batch dois.txt --output <dir> --lanes   # 标准车道调度极速模式
+scansci-pdf batch dois.txt --no-lanes               # 逐篇平铺竞速模式
+scansci-pdf batch dois.txt --scihub                 # 灰源纯享竞速引擎
 ```
 
-**要点**：
-- 任何有机构账号的用户都能用，无需预配置 WebVPN/CARSI
-- Cookies 持久化，同一出版商登录一次即可
-- 浏览器引擎为 **CloakBrowser**（Playwright 兼容反检测浏览器），能通过 Cloudflare Turnstile；出版社检测 TLS 指纹，Python HTTP 客户端即使带 cookies 也可能 403
+**批量标准三步法**:
+1. **预排查与本地断点 (Pre-triage)**:
+   - 扫描目标目录现有已完成有效 PDF (大小 `> 10KB` 且魔数开头为 `%PDF-`)。
+   - 自动生成去重队列，秒级跳过已成功论文。
+2. **极速车道并发 (Lanes Batching)**:
+   - S2 批量预嗅探 (500 DOI/请求直接获取 OA PDF 直链)
+   - 并行 HTTP 快车道 (OA 直链 + MDPI CDN 构造)
+   - 灰色源竞速 (Sci-Hub 免验镜像)
+   - 校园网/机构直连快速探测 (未登录即刻跳过)
+3. **审计与结算交付 (Reconciliation Manifest)**:
+   - 生成 `final_download_manifest.csv` 与 `final_summary.json`。
+   - 明确标注获取渠道 (`Sci-Hub`, `Nature`, `ScienceDirect`, `OA/Preprint`) 或不可达客观原因（如 2024+ 闭源顶刊未收录且无 OA）。
 
-### 流程 5：Elsevier API 快速通道（1-2 秒下载）
+⚠️ **>300 篇必须分批**——校验阶段并发 validate 会 TimeoutError 崩溃。重跑同文件自动跳过已完成。
 
-```
-1. scansci_pdf_elsevier_setup → 浏览器注册指引 → 复制 API Key
-2. scansci_pdf_config(key="elsevier_api_key", value="...")
-3. scansci_pdf_elsevier_setup(test=true) → 验证
-4. 后续 10.1016/ 开头 DOI 自动走 API 直接下载（无需 insttoken：校园网出口 + API key 即可）
-```
+## 检索与引文
 
-**NOT_ENTITLED 含义**：未连校园网或学校未订阅该刊，不是缺 insttoken。
-
-### 流程 6：内嵌 Tor（灰色源被墙时）
-
-```
-1. scansci_pdf_tor(action="install")   # 首次下载 Tor Expert Bundle
-2. scansci_pdf_tor(action="start")     # 受限网络可 use_bridges=true
-3. scansci_pdf_download(identifier="...", strategy="scihub_only")
+```bash
+scansci-pdf search "关键词" --limit 10 --sort cited_by_count   # 13源引擎,失败降级三源
 ```
 
-## 能力边界
+搜作者优先用 `--author "Dabo Guan"` 或 OpenAlex `--author-id`,别把人名放 query(全文匹配会混入同名/被引提及)。引文格式(citation: bibtex/ris/endnote)仅 MCP 支持。发现层:CLI `plan → estimate → find --out <dir>`,再 `build-queue <dir> --out queue.txt` 接 batch。OpenAlex 配额按 IP 每日计(429 就降级 Unpaywall 单点并发);Unpaywall 批量端点常 500,自写单点并发脚本更稳。
 
-| 请求 | 处理方式 |
-|------|----------|
-| 阅读/理解论文内容 | 不支持——只下载 PDF（可用 `markdown=true` 得 AI 可读文本层） |
-| 翻译论文 | 需要其他工具 |
-| 生成文献综述/摘要 | 需要 LLM 读取 PDF 后生成 |
-| 下载非学术 PDF | 不支持 |
-| 用户给了标题没有 DOI | 先 `search` 获取 DOI 再下载 |
-| 批量 100+ 篇 | `batch_download`，并发数由 `batch_workers` 配置控制 |
-| 需要机构权限的论文 | `login` 登录后重试下载 |
-| 下载失败 | 结果含 `error_type`；`paywall`→登录流程，`rate_limited`→稍后重试，`cloudflare_blocked`→启动 CloakBrowser/配置代理 |
+## 场景 → 工具链(常见意图直接对号入座)
 
-## 常见边界情况
+| 用户说 | 动作 |
+|---|---|
+| "下载这篇 <DOI/arXiv/文章页URL>" | `get <标识符>`;URL 直接喂,自动抽 DOI/arXiv;要补充材料加 `--si`,要 AI 可读全文加 `--md`(PDF 仍是默认交付物) |
+| "某人的全部/近年论文" | `search --author "Name" --out queue.txt` → `batch queue.txt --lanes` |
+| "某主题/关键词 + 年份/被引过滤" | `search "kw" --year-from 2023 --sort cited_by_count [--out queue.txt]` |
+| "给一份清单(xlsx/csv/txt/bib/APA)" | `batch 文件 --lanes`(表格/队列自动识别;渠道按 DOI 前缀自动预测) |
+| "上次有失败的,补齐" | `batch --retry <output>/batch_results.json`(自动读失败清单重跑) |
+| "模糊引用('Wang 2023 CRISPR 那篇')" | 先 `search "Wang 2023 CRISPR"` 拿候选让用户确认,别硬猜 DOI |
+| 系统性文献发现(PRSIMA/引文追链/高召回多源检索) | 装了 `scansci-find` skill/CLI → 用它;没装 → 本地降级链 `search → verify → resolve-oa → build-queue → batch --lanes` |
+| "只要合法来源" | `legal_only` 策略或 `--scihub` 反选 |
 
-- 科学符号（版权 ©、重音姓名）在 Markdown 导出中可能有质量告警（`markdown_warnings`）——文本可读，罕见字符需人工核对。
-- 批量任务无论成功、失败或超时都会在预算内退出并写 `batch_results.json`（原子写入）；挂住的源会被放弃而不是拖住整批。
-- `scan_find` 未安装时，`find`/`search`/`expand_citations` 会给出安装指引；`verify`/`resolve_oa` 超时返回结构化错误。
+## 机构渠道(按 DOI 前缀路由,先快后慢)
 
-## 环境安装引导
+1. **`10.1016`(Elsevier / Cell Press)**:
+   - **校园网直通(推荐)**: 校园网环境(`is_campus_network: true`)直接走浏览器校园网直通模式,自动将 DOI 转换为 PII 直链 (`sciencedirect.com/science/article/pii/<PII>`),8 秒内秒级下载完整全文 PDF。
+   - **无需 insttoken**: 即便 Elsevier API 报 403 NOT_ENTITLED,引擎也会自动回退至浏览器校园网直连通道;Session Cookie 自动持久化复用,无感绕过 Cloudflare。
+2. **`10.1007`(Springer)→ Springer TDM API**:
+   - 机构订阅+TDM 授权 key 交付 JATS XML 全文。
+3. **其余出版商 → WebVPN/CARSI**:
+   - 仅在用户明确交互模式下执行 CAS 登录；在自动化无头批处理中，未授权则秒级放行，绝不挂起任务。
 
-```
-1. scansci_pdf_diagnostics(check="setup") → 环境状态
-2. 按 readiness 处理：ready / partial / limited
-3. 缺少组件时按建议安装（pymupdf4llm 用于 markdown、cloakbrowser 用于反爬登录）
-```
+## 排障速查
 
-## 快速安装
-
-```
-pip install -U scansci-pdf
-pip install -U cloakbrowser    # 反爬浏览器（Chromium 内核）
-scansci-pdf doctor             # 或 MCP: scansci_pdf_diagnostics(check="health")
-```
+| 症状 | 原因与修复方案 |
+|---|---|
+| 卡在 180s 或 300s 不动 | 触发了历史的人工登录等待逻辑。现已在 `grace = 10` 与无头快速失败中杜绝。遇到时检查配置是否设置 `browser_headless: true` |
+| Sci-Hub 遇到 ALTCHA / 机器人验证 | 验证盾直接触发 fast-fail 熔断，自动尝试下一个免验镜像（如 `sci-hub.bz`）或交由校园网/OA 渠道 |
+| Windows 报 `0x800705AF` 页面文件太小 | 浏览器进程并发过多耗尽提交内存限制。确保 `max_browser_workers = 1` 并在复用单例 Chrome |
+| Elsevier API 报 403 NOT_ENTITLED | 正常现象（无机构专属 Token）。已配置校园网直通模式，自动由 Chrome 访问 ScienceDirect 原生内网抓取 |
+| 所有出版商均提示 Cloudflare 阻断 | 检查 Clash/TUN 代理分流：校园网环境必须将知网、ScienceDirect、Nature 等出版商域名配置为 `DIRECT` 直连 |
+| 下载失败结果带 `source_failures` | 逐渠道失败明细已完成快速收集。对于 2024+ 闭源顶刊且无 OA 者，属客观不可达，直接输出未命中清单供用户线下补充 |

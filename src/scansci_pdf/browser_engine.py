@@ -264,6 +264,24 @@ def _get_shared_browser(config: dict[str, Any] | None = None):
     _register_browser(browser)
     context = browser.new_context()
 
+    # Automatically restore saved publisher / CARSI cookies into shared context
+    try:
+        from .config import DATA_DIR
+        cache_dir = Path(config.get("cache_dir", str(DATA_DIR / "cache"))) if config else DATA_DIR / "cache"
+        cookie_file = cache_dir / "publisher_cookies.json"
+        if cookie_file.exists():
+            import json as _json
+            saved_cookies = _json.loads(cookie_file.read_text(encoding="utf-8"))
+            pw_cookies = [
+                {"name": c["name"], "value": c["value"], "domain": c.get("domain", ""), "path": c.get("path", "/")}
+                for c in saved_cookies if c.get("domain")
+            ]
+            if pw_cookies:
+                context.add_cookies(pw_cookies)
+                logger.info(f"browser_engine: restored {len(pw_cookies)} publisher cookies into shared context")
+    except Exception as _ce:
+        logger.info(f"browser_engine: cookie restore warning: {_ce}")
+
     # Launching the sync API leaves its dispatcher event loop "running" in
     # this thread (asyncio.get_running_loop() now succeeds here). Register it
     # so is_playwright_owned_loop() can tell OUR worker-thread loop apart from
@@ -664,18 +682,47 @@ def download_pdf_via_browser(
         except Exception:
             pass
         lower_html = html.lower()
-        if any(sig in lower_html for sig in [
-            "cf-browser-verification", "challenge-platform",
-            "just a moment", "attention required",
-            "security check", "captcha",
-            "请稍候", "正在验证", "checking your browser",
-            # ALTCHA anti-bot verification (used by sci-hub.ru and other Sci-Hub mirrors)
-            "altcha", "你是机器人吗", "not a robot", "nope",
+        title_lower = ""
+        try:
+            title_lower = (page.title() or "").lower()
+        except Exception:
+            pass
+        if any(sig in title_lower for sig in [
+            "just a moment", "attention required", "security check", "请稍候", "checking your browser", "robot"
+        ]) or any(sig in lower_html for sig in [
+            "cf-browser-verification", "cf-challenge-running", "challenge-form",
+            "are you a robot", "你是机器人吗", "not a robot", "altcha",
         ]):
             logger.info("browser_engine: anti-bot challenge detected, waiting...")
             time.sleep(10)
 
         current_url = page.url
+
+        # Check if page is viewing a PDF or ScienceDirect pdfft loading page
+        try:
+            title = page.title() or ""
+            if "pdf.sciencedirectassets.com" in title or "pdf.sciencedirectassets.com" in current_url or ".pdf" in current_url.lower():
+                pdf_b64 = page.evaluate("""
+                    async () => {
+                        const resp = await fetch(window.location.href);
+                        if (!resp.ok) return null;
+                        const blob = await resp.blob();
+                        return new Promise(resolve => {
+                            const reader = new FileReader();
+                            reader.onload = () => resolve(reader.result);
+                            reader.readAsDataURL(blob);
+                        });
+                    }
+                """)
+                if pdf_b64 and isinstance(pdf_b64, str) and pdf_b64.startswith("data:"):
+                    raw = base64.b64decode(pdf_b64.split(",", 1)[1])
+                    if raw[:5] == b"%PDF-" and len(raw) > 5000:
+                        output_path.parent.mkdir(parents=True, exist_ok=True)
+                        output_path.write_bytes(raw)
+                        logger.info(f"browser_engine: downloaded {len(raw)} bytes via direct pdfft/PDF viewer fetch")
+                        return True
+        except Exception as e:
+            logger.info(f"browser_engine: direct PDF fetch error: {e}")
 
         # Strategy 0: Network response capture
         for resp in captured_responses:
@@ -754,25 +801,31 @@ def download_pdf_via_browser(
 
         # Strategy 2: PDF link discovery in DOM
         try:
+            if "sciencedirect" in str(current_url).lower() or "cell.com" in str(current_url).lower():
+                try:
+                    page.wait_for_selector('a.accessbar-utility-link, a[href*="pdfft"], a[aria-label*="View PDF" i]', timeout=6000)
+                except Exception:
+                    pass
             pdf_link = page.evaluate("""
                 (() => {
                     for (const el of document.querySelectorAll('iframe, embed, object')) {
                         const src = el.src || el.data || '';
                         if (src.includes('.pdf') && !src.includes('supplement') && !src.includes('Suppl')) return src;
                     }
-                    const viewer = document.querySelector('#viewer, .pdfViewer, [data-l10n-id="download"]');
-                    if (viewer) return window.location.href;
+                    // Check explicit full-text PDF buttons first (ScienceDirect, etc.)
+                    const sdPdf = document.querySelector('a.accessbar-utility-link, a[href*="pdfft"], a[aria-label*="View PDF" i], a.pdf-download-btn-link');
+                    if (sdPdf && sdPdf.href) return sdPdf.href;
+
                     for (const a of document.querySelectorAll('a[href]')) {
                         const href = (a.href || '').toLowerCase();
                         const text = (a.innerText || '').toLowerCase();
                         if (href.includes('supplement') || href.includes('supporting') || href.includes('downloadsupplement') || href.includes('pb-assets')) continue;
-                        if (text.includes('supplement') || text.includes('supporting info')) continue;
+                        if (href.includes('/fir') || href.includes('preview') || href.includes('firstpage')) continue;
+                        if (text.includes('supplement') || text.includes('supporting info') || text.includes('preview')) continue;
                         if (href.includes('.pdf') || href.includes('/pdf/') || href.includes('pdfdirect')) {
                             if (a.href.startsWith('http')) return a.href;
                         }
                     }
-                    const sdPdf = document.querySelector('a[aria-label*="PDF"], a[aria-label*="pdf"], a.pdf-download-btn-link');
-                    if (sdPdf) return sdPdf.href;
                     return null;
                 })()
             """)
@@ -781,6 +834,47 @@ def download_pdf_via_browser(
                 logger.info(f"browser_engine: found PDF link: {pdf_link[:80]}")
                 parsed_link = urlparse(pdf_link)
                 link_path = parsed_link.path + ("?" + parsed_link.query if parsed_link.query else "")
+
+                # If pdfft or showPdf is in the link, navigate to it so it resolves to the S3 PDF viewer
+                if "pdfft" in pdf_link or "showPdf" in pdf_link:
+                    logger.info(f"browser_engine: navigating to PDF viewer: {pdf_link[:80]}")
+                    try:
+                        page.goto(pdf_link, wait_until="commit", timeout=30000)
+                        try:
+                            page.wait_for_load_state("domcontentloaded", timeout=10000)
+                        except Exception:
+                            pass
+                        time.sleep(4)
+                        for _eval_att in range(5):
+                            try:
+                                pdf_b64 = page.evaluate("""
+                                    async () => {
+                                        const resp = await fetch(window.location.href);
+                                        if (!resp.ok) return null;
+                                        const blob = await resp.blob();
+                                        return new Promise(resolve => {
+                                            const reader = new FileReader();
+                                            reader.onload = () => resolve(reader.result);
+                                            reader.readAsDataURL(blob);
+                                        });
+                                    }
+                                """)
+                                if pdf_b64 and isinstance(pdf_b64, str) and pdf_b64.startswith("data:"):
+                                    raw = base64.b64decode(pdf_b64.split(",", 1)[1])
+                                    if raw[:5] == b"%PDF-" and len(raw) > 5000:
+                                        output_path.parent.mkdir(parents=True, exist_ok=True)
+                                        output_path.write_bytes(raw)
+                                        logger.info(f"browser_engine: downloaded {len(raw)} bytes via viewer navigation")
+                                        return True
+                                time.sleep(2)
+                            except Exception as _eval_e:
+                                if "Execution context was destroyed" in str(_eval_e):
+                                    time.sleep(2)
+                                    continue
+                                logger.info(f"browser_engine: evaluate attempt error: {_eval_e}")
+                    except Exception as e:
+                        logger.info(f"browser_engine: viewer navigation error: {e}")
+
                 if parsed_link.netloc == parsed.netloc:
                     try:
                         pdf_b64 = page.evaluate(f"""

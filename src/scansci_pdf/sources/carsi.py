@@ -213,8 +213,8 @@ class CARSIClient:
                     # Step 1: Navigate to article page first (gets Cloudflare clearance)
                     log.info(f"   [CARSI-Browser] Loading article: {article_url[:60]}")
                     try:
-                        page.goto(article_url, wait_until="domcontentloaded", timeout=60000)
-                        time.sleep(5)
+                        page.goto(article_url, wait_until="domcontentloaded", timeout=15000)
+                        time.sleep(3)
                     except Exception:
                         pass
 
@@ -222,16 +222,19 @@ class CARSIClient:
                     url = page.url
                     log.info(f"   [CARSI-Browser] Page: '{title[:40]}' {url[:60]}")
 
-                    # Wait for Cloudflare challenge to resolve (visible stealth browser can pass it)
+                    # Wait for Cloudflare challenge to resolve
                     from ..network import is_cloudflare_challenge
-                    for _cf_wait in range(12):
+                    max_cf = 2 if self.config.get("browser_headless", True) else 12
+                    for _cf_wait in range(max_cf):
                         if is_cloudflare_challenge(page.title() or ""):
-                            log.info(f"   [CARSI-Browser] Cloudflare challenge detected, waiting... ({_cf_wait+1}/12)")
-                            time.sleep(5)
+                            log.info(f"   [CARSI-Browser] Cloudflare challenge detected, waiting... ({_cf_wait+1}/{max_cf})")
+                            time.sleep(3)
                         else:
                             break
                     else:
                         log.info("   [CARSI-Browser] Cloudflare challenge did not resolve")
+                        if self.config.get("browser_headless", True):
+                            return None
 
                     # Step 1b: Check if restored cookies already grant access
                     has_cookies = cookie_file.exists()
@@ -332,6 +335,9 @@ class CARSIClient:
                         url = page.url
                         title = page.title()
                         if any(x in url.lower() for x in _ak) or any(x in title for x in _at):
+                            if self.config.get("browser_headless", True):
+                                log.info("   [CARSI-Browser] CAS login required but in headless mode — fast-failing")
+                                return None
                             log.info("   [CARSI-Browser] CAS login required. Please log in...")
                             for i in range(100):
                                 time.sleep(3)

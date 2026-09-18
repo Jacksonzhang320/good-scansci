@@ -171,7 +171,8 @@ def _save_all_cookie_formats(
     pub_cookies = [c for c in cookie_data
                    if any(c.get("domain", "").endswith(d) for d in _pub_domains)]
     if pub_cookies:
-        _save_cookies_json(pub_cookies, cache_dir / "publisher_cookies.json")
+        from .browser_cookies import merge_cookies
+        merge_cookies(pub_cookies, config)
 
     # 4. Bridge to browser-engine headless service
     try:
@@ -1002,6 +1003,11 @@ _IDP_MAP: dict[str, str] = {
     "四川大学": "Sichuan", "天津大学": "Tianjin",
     "中国人民大学": "Renmin", "北京航空航天大学": "Beihang",
     "山东大学": "Shandong", "吉林大学": "Jilin",
+    "中国科学院大学": "University of Chinese Academy of Sciences",
+    "中国科学院": "Chinese Academy of Sciences",
+    "国科大": "University of Chinese Academy of Sciences",
+    "中科院": "Chinese Academy of Sciences",
+    "中国科技云": "CSTCloud",
 }
 
 # Institution search input selectors, tried in order on WAYF pages
@@ -1955,7 +1961,7 @@ def _browser_download(
                         if (a.href) return a.href;
                     }
                     // ScienceDirect: click View PDF button
-                    const btn = document.querySelector('a[aria-label*="View PDF" i], a.pdf-download-btn-link');
+                    const btn = document.querySelector('a.accessbar-utility-link, a[aria-label*="View PDF" i], a.pdf-download-btn-link');
                     if (btn && btn.href) return btn.href;
                     // Check for pdfft links (PDF viewer)
                     for (const a of document.querySelectorAll('a[href*="pdfft"]')) {
@@ -2059,9 +2065,14 @@ def _browser_download_with_fallback(
 
     # Paywall/navigate failure → try visible browser with SSO login
     elif err_type in ("paywall", "navigate_failed", "cloudflare_blocked") and config.get("carsi_idp_name"):
+        if config.get("browser_headless", True):
+            log.info(f"   [{publisher}] headless failed ({err_type}), skipping visible SSO login in headless mode")
+            return False
         log.info(f"   [{publisher}] headless failed ({err_type}), trying visible browser fallback...")
         try:
-            vbd_result = _visible_browser_download(doi, article_url, output_path, config, publisher)
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=1) as _pool:
+                vbd_result = _pool.submit(_visible_browser_download, doi, article_url, output_path, config, publisher).result()
             if vbd_result:
                 return True
         except Exception as e:
@@ -2671,15 +2682,27 @@ def try_elsevier_browser(
     from .pdf_utils import success
     from .browser_engine import is_available as browser_available, download_pdf_via_browser
 
-    # Campus network fast-path: skip HTTP, go directly to CloakBrowser
+    # Campus network fast-path: skip HTTP, go directly to CloakBrowser via ScienceDirect
     if _is_campus_network(config) and browser_available(config):
-        cell_url = _build_cell_press_url(doi)
-        if cell_url:
-            log.info(f"   [Elsevier] campus network detected, trying CloakBrowser directly: {cell_url[:80]}")
-            if download_pdf_via_browser(cell_url, output_path, config):
-                if is_pdf_file(output_path):
-                    log.info(f"   [Elsevier] campus network download succeeded")
-                    return success(doi, output_path, "CellPress(Campus)")
+        sd_url = None
+        resolved = _resolve_elsevier_pii(doi, config)
+        if resolved:
+            if "sciencedirect.com" in resolved:
+                sd_url = resolved
+            elif "cell.com" in resolved and "/abstract/" in resolved:
+                pii = resolved.split("/abstract/")[-1]
+                sd_url = f"https://www.sciencedirect.com/science/article/pii/{pii}"
+        if not sd_url:
+            cell_url = _build_cell_press_url(doi)
+            if cell_url and "/abstract/" in cell_url:
+                pii = cell_url.split("/abstract/")[-1]
+                sd_url = f"https://www.sciencedirect.com/science/article/pii/{pii}"
+        target_url = sd_url or (resolved or f"https://doi.org/{doi}")
+        log.info(f"   [Elsevier] campus network detected, trying CloakBrowser directly: {target_url[:80]}")
+        if download_pdf_via_browser(target_url, output_path, config):
+            if is_pdf_file(output_path):
+                log.info(f"   [Elsevier] campus network download succeeded")
+                return success(doi, output_path, "Elsevier(Campus)")
 
     # Fast-path: if we have publisher cookies, try HTTP download first
     # This avoids 15-30s browser startup overhead
