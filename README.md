@@ -1,14 +1,13 @@
 <div align="center">
-  <img src="./assets/brand/scansci-pdf-icon.png" alt="ScanSci PDF" width="96" />
-  <h1>ScanSci PDF</h1>
+  <img src="./assets/brand/scansci-pdf-icon.png" alt="Good-ScanSci" width="96" />
+  <h1>Good-ScanSci</h1>
 
-  <a href="https://pypi.org/project/scansci-pdf/"><img alt="PyPI" src="https://img.shields.io/pypi/v/scansci-pdf?style=flat-square" /></a>
   <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-0F766E?style=flat-square" /></a>
   <a href="https://modelcontextprotocol.io"><img alt="MCP" src="https://img.shields.io/badge/MCP-17%20tools-111827?style=flat-square" /></a>
 
-  让 Agent 替你下载学术论文 —— 20+ 数据源并行竞速，100+ 高校机构通道，一句自然语言拿下整份文献清单。
+  让 Agent 替你下载学术论文 —— 校园网原生直通，20+ 数据源并行竞速，100+ 高校机构通道，科研文献极速交付。
 
-  [能力](#能力) · [快速开始](#快速开始) · [怎么用](#怎么用) · [机构通道](#机构通道) · [社区](#交流群--community) · [致谢](#致谢)
+  [优化特性](#-good-scansci-基于-scansci-pdf-1160-的科研网络极速二次优化版) · [能力](#能力) · [快速开始](#快速开始) · [怎么用](#怎么用) · [机构通道](#机构通道) · [许可证](#许可证)
 </div>
 
 ---
@@ -383,64 +382,8 @@ Tier 5 (20s) ─ WebVPN / CARSI 机构代理
 
 </details>
 
-## 交流群 / Community
-
-扫码加入微信交流群，一起聊 **AI for Science** —— 偏 AI 应用与科研工具，也欢迎讨论 ScanSci PDF 的用法、bug 和需求。
-
-<table>
-  <tr>
-    <td width="250" align="center">
-      <img src="assets/brand/wechat-group-qr.jpg" alt="微信群二维码" width="200">
-      <br>
-      <sub><strong>微信交流群</strong> / WeChat Group<br>群码 7 天有效，过期会更新</sub>
-    </td>
-    <td width="250" align="center">
-      <img src="assets/brand/wechat-contact-qr.jpg" alt="群主微信" width="200">
-      <br>
-      <sub><strong>加群主微信</strong> / Contact<br>群码失效？扫码备注 <em>scansci</em> 拉你进群</sub>
-    </td>
-    <td valign="middle">
-      <p><strong>群聊方向</strong></p>
-      <ul>
-        <li>AI 在科研场景的落地与工具链</li>
-        <li>论文检索、下载、阅读、整理的工作流</li>
-        <li>ScanSci PDF 使用问题与改进建议</li>
-      </ul>
-      <p><sub>二维码过期会更新；着急进群可直接加群主微信。</sub></p>
-    </td>
-  </tr>
-</table>
-
-更偏好异步交流？欢迎直接在 [Issues](https://github.com/Rimagination/scansci-pdf/issues) 或 [Discussions](https://github.com/Rimagination/scansci-pdf/discussions) 区开贴。
-
-## 赞助者
-
-<a href="https://github.com/qwlei328-maker"><img src="https://avatars.githubusercontent.com/u/257463305?v=4" width="50" height="50" alt="qwlei328-maker" title="Natasha"/></a>
-<a href="https://github.com/jingqingqiu1"><img src="https://avatars.githubusercontent.com/u/87510394?v=4" width="50" height="50" alt="jingqingqiu1" title="jingqingqiu1"/></a>
-<a href="https://github.com/minqifeng"><img src="https://avatars.githubusercontent.com/u/61303605?v=4" width="50" height="50" alt="minqifeng" title="minqifeng"/></a>
-
-## 致谢
-
-本项目在开发过程中参考和借鉴了以下开源项目：
-
-- **[FlareSolverr](https://github.com/FlareSolverr/FlareSolverr)** — 早期反 bot 绕过架构设计
-- **[ref-downloader](https://github.com/ltczding-gif/ref-downloader)** — Publisher 专用下载策略（Elsevier crasolve 检测、Wiley PDFDirect、AIP loading page 等）
-- **[paper-fetch-skill](https://github.com/Dictation354/paper-fetch-skill)** — 论文获取 Agent Skill 设计
-- **[paper-fetcher](https://github.com/fermionoid/paper-fetcher)** — 论文下载流程参考
-- **[cloakbrowser](https://github.com/CloakHQ/CloakBrowser)** — Chromium stealth 浏览器引擎
-
-感谢以上项目作者的开源贡献。
-
 ## 许可证
 
 [Apache License 2.0](LICENSE)
 
 例外：`src/scansci_pdf/_core/` 中的 Cython 编译扩展（`.pyd`/`.so`）为预编译二进制，仅通过 PyPI 分发。其 Cython 源码（`.pyx`）为专有代码，不包含在本仓库中。
-
-## Star History
-
-<p align="center">
-  <img alt="Star History Chart" src="star-history.svg" width="860" />
-</p>
-
-> 手绘星标曲线，每日由仓库自建的 Action 自动更新——数据与图表都在本仓库内，不依赖任何第三方服务。
